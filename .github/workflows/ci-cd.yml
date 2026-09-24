@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     # 使用 deploy 环境的 secrets（Settings → Environments → deploy）
     environment: deploy
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       HOST: ${{ secrets.HOST }}
       SSH_USER: ${{ secrets.SSH_USER }}
@@ -104,28 +104,40 @@ jobs:
         if: steps.check.outputs.available == 'true'
         run: |
           set -e
-          SSH_OPTS=(-i ~/.ssh/id_deploy -p "$SSH_PORT" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15)
-          SCP_OPTS=(-i ~/.ssh/id_deploy -P "$SSH_PORT" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15)
+          # BatchMode=yes：禁止任何交互（密码/口令提示），避免 CI 中挂死
+          SSH_OPTS=(-i ~/.ssh/id_deploy -p "$SSH_PORT" -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
+          SCP_OPTS=(-i ~/.ssh/id_deploy -P "$SSH_PORT" -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
           TARGET="${SSH_USER}@${HOST}"
+
+          echo "::notice::连接测试 ${TARGET} ..."
+          SIZE=$(du -sh publish | cut -f1)
+          echo "::notice::待上传产物大小：${SIZE}（跨国链路，大文件可能需要数分钟）"
 
           # 清理上次的临时文件
           ssh "${SSH_OPTS[@]}" "$TARGET" "rm -rf /tmp/experience-api-new /tmp/experience-api.service"
+          echo "::notice::SSH 认证成功，开始上传..."
 
           # 上传应用产物 + systemd 服务文件
           scp "${SCP_OPTS[@]}" -r publish "$TARGET:/tmp/experience-api-new"
           scp "${SCP_OPTS[@]}" deploy/experience-api.service "$TARGET:/tmp/experience-api.service"
+          echo "::notice::上传完成，开始安装并重启服务..."
 
           # 停服务 → 替换文件 → 注册/重启 systemd → 放行防火墙
           ssh "${SSH_OPTS[@]}" "$TARGET" bash -s <<'REMOTE'
           set -e
+          echo ">> 替换应用文件"
           sudo rm -rf ${{ env.REMOTE_DIR }}
           sudo mkdir -p ${{ env.REMOTE_DIR }}
           sudo cp -a /tmp/experience-api-new/. ${{ env.REMOTE_DIR }}/
           sudo chmod +x ${{ env.REMOTE_DIR }}/Experience.Api
+          echo ">> 注册并重启 systemd 服务"
           sudo cp /tmp/experience-api.service /etc/systemd/system/experience-api.service
           sudo systemctl daemon-reload
           sudo systemctl enable experience-api
           sudo systemctl restart experience-api
+          sleep 2
+          systemctl is-active experience-api
+          echo ">> 放行防火墙（若启用）"
           if systemctl is-active --quiet firewalld; then
             sudo firewall-cmd --permanent --add-port=${{ env.APP_PORT }}/tcp
             sudo firewall-cmd --reload
@@ -134,12 +146,15 @@ jobs:
             sudo ufw allow ${{ env.APP_PORT }}/tcp
           fi
           rm -rf /tmp/experience-api-new /tmp/experience-api.service
+          echo ">> 远程安装完成"
           REMOTE
 
       - name: Verify deployment
         if: steps.check.outputs.available == 'true'
         run: |
+          echo "健康检查："
           curl -fsS --retry 8 --retry-delay 3 --retry-all-errors "http://${HOST}:${APP_PORT}/health"
           echo
           curl -fsS "http://${HOST}:${APP_PORT}/api/hello?name=github-actions"
           echo
+          echo "✅ 部署成功：http://${HOST}:${APP_PORT}/api/hello?name=你的名字"
