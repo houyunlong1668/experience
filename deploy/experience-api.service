@@ -1,0 +1,14 @@
+[Unit]
+Description=Experience.Api demo web API
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/experience-api
+ExecStart=/opt/experience-api/Experience.Api
+Restart=always
+RestartSec=3
+Environment=ASPNETCORE_URLS=http://0.0.0.0:8080
+Environment=ASPNETCORE_ENVIRONMENT=Production
+
+[Install]
+WantedBy=multi-user.target
