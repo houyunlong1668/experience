@@ -95,6 +95,10 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
+          if ! ssh-keygen -y -f ~/.ssh/id_deploy > /dev/null 2>&1; then
+            echo "::error::SSH_PRIVATE_KEY 格式无效：需要完整的多行 OpenSSH/RSA 私钥文件内容（含 BEGIN/END 行），不能是公钥、.ppk 或字面量 \\n。"
+            exit 1
+          fi
 
       - name: Deploy to Aliyun ECS
         if: steps.check.outputs.available == 'true'
