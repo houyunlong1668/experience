@@ -57,6 +57,8 @@ jobs:
     # push 到 main 或手动 Run workflow（在 main 上）时部署，PR 只构建
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # 使用 deploy 环境的 secrets（Settings → Environments → deploy）
+    environment: deploy
     timeout-minutes: 20
     env:
       HOST: ${{ secrets.HOST }}
@@ -76,9 +78,13 @@ jobs:
       - name: Check SSH config
         id: check
         run: |
-          if [ -z "$HOST" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_PRIVATE_KEY" ]; then
+          missing=""
+          [ -z "$HOST" ] && missing="$missing HOST"
+          [ -z "$SSH_USER" ] && missing="$missing SSH_USER"
+          [ -z "$SSH_PRIVATE_KEY" ] && missing="$missing SSH_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::未配置 HOST / SSH_USER / SSH_PRIVATE_KEY secret，已跳过部署。配置后重新运行本工作流即可。"
+            echo "::warning::缺少 secrets：$missing（需位于 deploy 环境或仓库 Actions secrets，配置后重新运行）"
           else
             echo "available=true" >> "$GITHUB_OUTPUT"
           fi
