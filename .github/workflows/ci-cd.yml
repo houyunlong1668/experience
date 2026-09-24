@@ -15,12 +15,19 @@ env:
   DOTNET_VERSION: '10.0.x'
   PROJECT_PATH: Experience.Api.csproj
   APP_PORT: '8080'
-  REMOTE_DIR: /opt/experience-api
+  # ↓↓↓ 阿里云 ACR 配置：命名空间在 ACR 控制台「命名空间」页查看 ↓↓↓
+  ACR_REGISTRY: registry.cn-hangzhou.aliyuncs.com
+  ACR_NAMESPACE: REPLACE_ME_NAMESPACE
+  IMAGE_NAME: experience-api
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      # 仓库级 secret（Settings → Secrets and variables → Actions → Repository secrets）
+      ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+      ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,60 +38,63 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore
-        run: dotnet restore ${{ env.PROJECT_PATH }} -r linux-x64
+        run: dotnet restore ${{ env.PROJECT_PATH }}
 
       - name: Build
         run: dotnet build ${{ env.PROJECT_PATH }} --configuration Release --no-restore
 
-      - name: Publish (self-contained linux-x64)
-        run: >
-          dotnet publish ${{ env.PROJECT_PATH }}
-          --configuration Release
-          -r linux-x64
-          --self-contained true
-          -p:PublishSingleFile=true
-          --no-restore
-          --output ./publish
+      - name: Publish
+        run: dotnet publish ${{ env.PROJECT_PATH }} --configuration Release --no-build --output ./publish
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: webapp-publish
-          path: ./publish
+      - name: Docker build
+        run: |
+          IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/${IMAGE_NAME}"
+          echo "构建镜像：$IMAGE:${GITHUB_SHA}"
+          docker build -t "$IMAGE:${GITHUB_SHA}" -t "$IMAGE:latest" .
+
+      - name: Push to Aliyun ACR
+        # PR 只构建验证，不推送
+        if: github.event_name == 'push'
+        run: |
+          if [ -z "$ACR_USERNAME" ] || [ -z "$ACR_PASSWORD" ] || [ "$ACR_NAMESPACE" = "REPLACE_ME_NAMESPACE" ]; then
+            echo "::warning::ACR 未配置完成（缺仓库级 secret ACR_USERNAME/ACR_PASSWORD，或 workflow 顶部 ACR_NAMESPACE 未填写），跳过镜像推送"
+            exit 0
+          fi
+          echo "$ACR_PASSWORD" | docker login --username "$ACR_USERNAME" --password-stdin "$ACR_REGISTRY"
+          IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/${IMAGE_NAME}"
+          docker push "$IMAGE:${GITHUB_SHA}"
+          docker push "$IMAGE:latest"
+          echo "::notice::镜像已推送：$IMAGE:${GITHUB_SHA}"
 
   deploy:
     needs: build
     # push 到 main 或手动 Run workflow（在 main 上）时部署，PR 只构建
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # 使用 deploy 环境的 secrets（Settings → Environments → deploy）
+    # SSH 密钥位于 deploy 环境（Settings → Environments → deploy）
     environment: deploy
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       HOST: ${{ secrets.HOST }}
       SSH_USER: ${{ secrets.SSH_USER }}
       SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+      ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: webapp-publish
-          path: ./publish
-
-      - name: Check SSH config
+      - name: Check config
         id: check
         run: |
           missing=""
-          [ -z "$HOST" ] && missing="$missing HOST"
-          [ -z "$SSH_USER" ] && missing="$missing SSH_USER"
-          [ -z "$SSH_PRIVATE_KEY" ] && missing="$missing SSH_PRIVATE_KEY"
+          [ -z "$HOST" ] && missing="$missing HOST(deploy环境)"
+          [ -z "$SSH_USER" ] && missing="$missing SSH_USER(deploy环境)"
+          [ -z "$SSH_PRIVATE_KEY" ] && missing="$missing SSH_PRIVATE_KEY(deploy环境)"
+          [ -z "$ACR_USERNAME" ] && missing="$missing ACR_USERNAME(仓库级)"
+          [ -z "$ACR_PASSWORD" ] && missing="$missing ACR_PASSWORD(仓库级)"
+          [ "$ACR_NAMESPACE" = "REPLACE_ME_NAMESPACE" ] && missing="$missing ACR_NAMESPACE(workflow顶部)"
           if [ -n "$missing" ]; then
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::缺少 secrets：$missing（需位于 deploy 环境或仓库 Actions secrets，配置后重新运行）"
+            echo "::warning::缺少配置：$missing —— 已跳过部署，补齐后重新运行即可"
           else
             echo "available=true" >> "$GITHUB_OUTPUT"
           fi
@@ -100,53 +110,48 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy to Aliyun ECS
+      - name: Deploy via Docker
         if: steps.check.outputs.available == 'true'
         run: |
           set -e
-          # BatchMode=yes：禁止任何交互（密码/口令提示），避免 CI 中挂死
+          # BatchMode：禁止任何交互提示，避免 CI 挂死
           SSH_OPTS=(-i ~/.ssh/id_deploy -p "$SSH_PORT" -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
-          SCP_OPTS=(-i ~/.ssh/id_deploy -P "$SSH_PORT" -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
           TARGET="${SSH_USER}@${HOST}"
 
           echo "::notice::连接测试 ${TARGET} ..."
-          SIZE=$(du -sh publish | cut -f1)
-          echo "::notice::待上传产物大小：${SIZE}（跨国链路，大文件可能需要数分钟）"
 
-          # 清理上次的临时文件
-          ssh "${SSH_OPTS[@]}" "$TARGET" "rm -rf /tmp/experience-api-new /tmp/experience-api.service"
-          echo "::notice::SSH 认证成功，开始上传..."
+          # 1) 确保服务器已安装 Docker（缺失则用阿里云镜像源安装）
+          ssh "${SSH_OPTS[@]}" "$TARGET" bash -s <<'REMOTE_SETUP'
+          set -e
+          if ! command -v docker >/dev/null 2>&1; then
+            echo ">> 服务器未安装 Docker，开始安装（--mirror Aliyun）"
+            curl -fsSL https://get.docker.com | sudo sh -s -- --mirror Aliyun
+            sudo systemctl enable --now docker
+          fi
+          sudo docker --version
+          REMOTE_SETUP
 
-          # 上传应用产物 + systemd 服务文件
-          scp "${SCP_OPTS[@]}" -r publish "$TARGET:/tmp/experience-api-new"
-          scp "${SCP_OPTS[@]}" deploy/experience-api.service "$TARGET:/tmp/experience-api.service"
-          echo "::notice::上传完成，开始安装并重启服务..."
+          # 2) 登录 ACR（密码经加密通道的 stdin 传输，不进命令行参数）
+          printf '%s\n' "$ACR_PASSWORD" | ssh "${SSH_OPTS[@]}" "$TARGET" \
+            "sudo docker login --username '$ACR_USERNAME' --password-stdin '$ACR_REGISTRY'"
+          echo "::notice::ACR 登录成功，拉取镜像并启动容器..."
 
-          # 停服务 → 替换文件 → 注册/重启 systemd → 放行防火墙
+          # 3) 停用旧 systemd 部署 → 拉取镜像 → 以容器方式运行
           ssh "${SSH_OPTS[@]}" "$TARGET" bash -s <<'REMOTE'
           set -e
-          echo ">> 替换应用文件"
-          sudo rm -rf ${{ env.REMOTE_DIR }}
-          sudo mkdir -p ${{ env.REMOTE_DIR }}
-          sudo cp -a /tmp/experience-api-new/. ${{ env.REMOTE_DIR }}/
-          sudo chmod +x ${{ env.REMOTE_DIR }}/Experience.Api
-          echo ">> 注册并重启 systemd 服务"
-          sudo cp /tmp/experience-api.service /etc/systemd/system/experience-api.service
-          sudo systemctl daemon-reload
-          sudo systemctl enable experience-api
-          sudo systemctl restart experience-api
-          sleep 2
-          systemctl is-active experience-api
-          echo ">> 放行防火墙（若启用）"
-          if systemctl is-active --quiet firewalld; then
-            sudo firewall-cmd --permanent --add-port=${{ env.APP_PORT }}/tcp
-            sudo firewall-cmd --reload
-          fi
-          if systemctl is-active --quiet ufw; then
-            sudo ufw allow ${{ env.APP_PORT }}/tcp
-          fi
-          rm -rf /tmp/experience-api-new /tmp/experience-api.service
-          echo ">> 远程安装完成"
+          echo ">> 停用旧 systemd 部署（如有）"
+          sudo systemctl disable --now experience-api 2>/dev/null || true
+          sudo rm -rf /opt/experience-api
+          echo ">> 拉取镜像（国内 ACR，首次含基础层约百 MB，之后仅增量几 MB）"
+          sudo docker pull "${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          echo ">> 启动容器"
+          sudo docker rm -f experience-api 2>/dev/null || true
+          sudo docker run -d --name experience-api --restart=always \
+            -p ${{ env.APP_PORT }}:8080 \
+            "${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          sleep 3
+          sudo docker ps --filter name=experience-api --format '{{.Names}}  {{.Status}}'
+          echo ">> 容器已启动"
           REMOTE
 
       - name: Verify deployment
