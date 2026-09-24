@@ -15,10 +15,10 @@ env:
   DOTNET_VERSION: '10.0.x'
   PROJECT_PATH: Experience.Api.csproj
   APP_PORT: '8080'
-  # ↓↓↓ 阿里云 ACR 配置：命名空间在 ACR 控制台「命名空间」页查看 ↓↓↓
+  # ↓↓↓ 阿里云 ACR 配置（命名空间/仓库名取自 ACR 控制台）↓↓↓
   ACR_REGISTRY: registry.cn-hangzhou.aliyuncs.com
-  ACR_NAMESPACE: replace-me-namespace
-  IMAGE_NAME: experience-api
+  ACR_NAMESPACE: hou_yun_long
+  IMAGE_NAME: experience
 
 jobs:
   build:

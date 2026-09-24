@@ -28,8 +28,8 @@ curl "http://localhost:5131/api/hello?name=dev"
 
 ```bash
 dotnet publish Experience.Api.csproj -c Release -o publish
-docker build -t experience-api:local .
-docker run --rm -p 8080:8080 experience-api:local
+docker build -t experience:local .
+docker run --rm -p 8080:8080 experience:local
 curl "http://localhost:8080/api/hello?name=docker"
 ```
 
@@ -52,7 +52,7 @@ curl "http://localhost:8080/api/hello?name=docker"
 
 打开 [容器镜像服务控制台](https://cr.console.aliyun.com) → 开通**个人版**（免费）：
 
-- **命名空间**：查看或创建一个（记下来，比如 `houyunlong`）
+- **命名空间**：`hou_yun_long`（已填入 workflow），镜像仓库：`experience`（控制台已存在）
 - **访问凭证 → 设置登录密码**：这是**镜像仓库密码**（不是阿里云账号密码，也没设过就设一个）
 - 仓库无需手动创建，推送时自动创建
 
@@ -65,8 +65,8 @@ curl "http://localhost:8080/api/hello?name=docker"
 | `ACR_USERNAME` | `houyunlong` |
 | `ACR_PASSWORD` | 刚设置的镜像仓库登录密码 |
 
-然后把命名空间填到 [.github/workflows/ci-cd.yml](.github/workflows/ci-cd.yml) 顶部的
-`ACR_NAMESPACE: replace-me-namespace`。
+命名空间与仓库名已在 [.github/workflows/ci-cd.yml](.github/workflows/ci-cd.yml) 顶部配好
+（`ACR_NAMESPACE: hou_yun_long` / `IMAGE_NAME: experience`），无需再改。
 
 ### 2. SSH 密钥（deploy 环境，已配过）
 
@@ -100,6 +100,6 @@ sudo docker rm -f experience-api            # 停删容器（下次部署会重�
 
 ## 说明
 
-- 镜像 = `registry.cn-hangzhou.aliyuncs.com/<命名空间>/experience-api`，标签为提交 sha 和 `latest`
+- 镜像 = `registry.cn-hangzhou.aliyuncs.com/hou_yun_long/experience`，标签为提交 sha 和 `latest`
 - 镜像为框架依赖发布 + 官方 `aspnet:10.0` 运行时，服务器无需安装 .NET
 - 纯 HTTP + IP 直连；要域名/HTTPS 可在 ECS 上加 Nginx 反代
