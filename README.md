@@ -66,7 +66,7 @@ curl "http://localhost:8080/api/hello?name=docker"
 | `ACR_PASSWORD` | 刚设置的镜像仓库登录密码 |
 
 然后把命名空间填到 [.github/workflows/ci-cd.yml](.github/workflows/ci-cd.yml) 顶部的
-`ACR_NAMESPACE: REPLACE_ME_NAMESPACE`。
+`ACR_NAMESPACE: replace-me-namespace`。
 
 ### 2. SSH 密钥（deploy 环境，已配过）
 
