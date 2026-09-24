@@ -54,8 +54,8 @@ jobs:
 
   deploy:
     needs: build
-    # 只在推送到 main 时部署，PR 只构建
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # push 到 main 或手动 Run workflow（在 main 上）时部署，PR 只构建
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
