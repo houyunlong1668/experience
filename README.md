@@ -13,6 +13,7 @@ CICD 实验：简易 .NET Web API + GitHub Actions CI/CD + **Docker 镜像 + 阿
 | GET | `/` | 服务信息 |
 | GET | `/api/hello?name=xxx` | 问候接口，返回 JSON |
 | GET | `/api/time` | 服务器时间（验证线上是动态进程） |
+| GET | `/api/sum?a=1&b=2` | 加法接口 |
 | GET | `/health` | 健康检查（部署后自动探测） |
 | GET | `/weatherforecast` | 模板自带示例 |
 

@@ -19,7 +19,7 @@ app.MapGet("/", () => new
 {
     service = "Experience.Api",
     description = "简易 .NET Web API，通过 GitHub Actions 部署到 Azure App Service",
-    endpoints = new[] { "/api/hello", "/api/time", "/health", "/weatherforecast" }
+    endpoints = new[] { "/api/hello", "/api/time", "/api/sum", "/health", "/weatherforecast" }
 })
 .WithName("Root");
 
@@ -39,6 +39,15 @@ app.MapGet("/api/time", () => new
     machine = Environment.MachineName
 })
 .WithName("Time");
+
+// 加法接口：GET /api/sum?a=1&b=2
+app.MapGet("/api/sum", (int a, int b) => new
+{
+    a,
+    b,
+    sum = a + b
+})
+.WithName("Sum");
 
 // 健康检查：GET /health —— 可配到 Azure App Service 的健康检查路径
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }))
