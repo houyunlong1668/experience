@@ -53,8 +53,8 @@ jobs:
           docker build -t "$IMAGE:${GITHUB_SHA}" -t "$IMAGE:latest" .
 
       - name: Push to Aliyun ACR
-        # PR 只构建验证，不推送
-        if: github.event_name == 'push'
+        # push 到 main 或手动触发时推送，PR 只构建验证
+        if: github.event_name != 'pull_request'
         run: |
           if [ -z "$ACR_USERNAME" ] || [ -z "$ACR_PASSWORD" ] || [ "$ACR_NAMESPACE" = "replace-me-namespace" ]; then
             echo "::warning::ACR 未配置完成（缺仓库级 secret ACR_USERNAME/ACR_PASSWORD，或 workflow 顶部 ACR_NAMESPACE 未填写），跳过镜像推送"
